@@ -34,9 +34,9 @@
 #include "Arduino.h"
 
 
-#define RX_PIN 10
-#define TX_PIN 11	
-#define RESET_PIN 2   // pin to the reset pin sim800l
+#define RX_PIN 8
+#define TX_PIN 9	
+#define RESET_PIN 10   // pin to the reset pin sim800l
 
 #define LED true // used for indicator led, in case that you don want set to false . 
 #define LED_PIN 13 //pin to indicate states. 
@@ -49,11 +49,14 @@ class Sim800l
   private:
 	int _timeout;
 	String _buffer;
-		String _readSerial();
-  	
+	String _readSerial();
+	bool _execAndCatchError(char* command, char* lastResponse);
+
   	
   public:
-
+  
+	void sendCmd(const char* cmd);
+	bool waitForResp(char *lastResp, const char *resp, unsigned int timeout, bool waitForError, const char *err_resp);
  	void begin();	
  	void reset(); 
 
@@ -70,8 +73,10 @@ class Sim800l
 
 	void signalQuality();
 	void setPhoneFunctionality();
-	void activateBearerProfile();
-	void deactivateBearerProfile();
+	byte getRegistrationStatus();
+	bool activateBearerProfile(char* apn_name);
+	int sendHTTPGetRequest(const char* url, char* response);
+	bool deactivateBearerProfile();
 	//get time with the variables by reference
 	void RTCtime(int *day,int *month, int *year,int *hour,int *minute, int *second);  
 	String dateNet(); //return date,time, of the network
