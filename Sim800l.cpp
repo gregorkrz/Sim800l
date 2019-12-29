@@ -34,6 +34,10 @@
 
 SoftwareSerial SIM(RX_PIN,TX_PIN);
 //String _buffer;
+const byte respBufLen = 25;
+const unsigned int def_timeout = 2; // timeout in seconds
+
+
 
 void Sim800l::begin(){
 	SIM.begin(9600);
@@ -49,7 +53,7 @@ void Sim800l::begin(){
 //
 String Sim800l::_readSerial(){
   _timeout=0;
-  while  (!SIM.available() && _timeout < 12000  ) 
+  while  (!SIM.available() && _timeout < 12000) 
   {
     delay(13);
     _timeout++;
@@ -61,6 +65,43 @@ String Sim800l::_readSerial(){
   }
   
 
+}
+
+bool Sim800l::waitForResp(char *lastResp, const char *resp, unsigned int timeout, bool waitForError, const char *err_resp)
+{
+	//Serial.println("Waitforresp");
+	lastResp[respBufLen] = "";
+    unsigned int len = strlen(resp);
+    unsigned int sum = 0;
+	unsigned int sum_err = 0;
+    unsigned long timerStart,timerEnd;
+    timerStart = millis();
+    
+    while(1) {
+		
+        if(SIM.available()) {
+            char c = SIM.read();
+            if(strlen(lastResp)+1<respBufLen) {
+				lastResp[strlen(lastResp)] = c;
+				lastResp[strlen(lastResp)+1] = 0;
+				}
+            //Serial.write(c);
+            sum = (c==resp[sum]) ? sum+1 : 0;
+		if(waitForError) {
+			sum_err = (c==err_resp[sum_err]) ? sum_err+1 : 0;
+			if(sum_err == len) {
+				return 0;
+			}
+		}
+            if(sum == len)break;
+        }
+        timerEnd = millis();
+        if(timerEnd - timerStart > 1000 * timeout) {
+			//Serial.println("Timeout");
+            return false;
+        }
+    }
+    return true;
 }
 
 
@@ -122,20 +163,73 @@ subclause 7.2.4
 }
 
 
-void Sim800l::activateBearerProfile(){
-  SIM.print (F(" AT+SAPBR=3,1,\"CONTYPE\",\"GPRS\" \r\n" ));_buffer=_readSerial();  // set bearer parameter 
-  SIM.print (F(" AT+SAPBR=3,1,\"APN\",\"internet\" \r\n" ));_buffer=_readSerial(); // set apn  
-  SIM.print (F(" AT+SAPBR=1,1 \r\n"));delay(1200);_buffer=_readSerial();// activate bearer context
-  SIM.print (F(" AT+SAPBR=2,1\r\n "));delay(3000);_buffer=_readSerial(); // get context ip address
+bool Sim800l::activateBearerProfile(char* apn_name){
+  char lastResp[respBufLen] = "";
+  if(_execAndCatchError("AT+SAPBR=3,1,\"CONTYPE\",\"GPRS\" \r\n", lastResp) ||
+  _execAndCatchError("AT+SAPBR=3,1,\"CONTYPE\",\"GPRS\" \r\n" , lastResp)) return 0;
+  SIM.print (("AT+SAPBR=3,1,\"APN\",\"")); SIM.print(apn_name); SIM.print(F("\" \r\n" )); if(!waitForResp(lastResp, "OK", def_timeout, true, "ERROR")) return 0;
+  if(_execAndCatchError(("AT+SAPBR=1,1 \r\n"), lastResp)) return 0;
+  return 1;
 }
 
 
-void Sim800l::deactivateBearerProfile(){
-  SIM.print (F("AT+SAPBR=0,1\r\n "));
-  delay(1500);
+bool Sim800l::deactivateBearerProfile(){
+char lastResp[respBufLen] = "";
+  if(_execAndCatchError(("AT+SAPBR=0,1\r\n "), lastResp)) return 0;
+  return 1;
 }
 
+byte Sim800l::getRegistrationStatus() {
+	SIM.print("AT+CREG?\r\n");
+	char lastResp[respBufLen] = "";
+	if(!waitForResp(lastResp, "OK", def_timeout, true, "ERROR")) return 6;
+	String lastRespS = lastResp;
+	int tmp = lastRespS.charAt(lastRespS.indexOf(",")+1)-'0';
+	if(tmp >= 0 and tmp <=5) return tmp;
+	else return 7;
+	/*
+	0 = not registered, not searching
+	1 = registered, home network
+	2 = not registered, searching for a new operator to register to
+	3 = registration denied
+	4 = unknown
+	5 = registered, roaming
+	*/
+}
 
+bool Sim800l::_execAndCatchError(char* command, char* lastResponse) {
+	SIM.print(command);
+	return !(waitForResp(lastResponse, "OK", def_timeout, true, "ERROR"));
+}
+
+int Sim800l::sendHTTPGetRequest(const char* url, char* response) {
+	char lastResp[respBufLen] = "";
+	if(_execAndCatchError("AT+HTTPINIT\r\n", lastResp)) return 0;
+	if(_execAndCatchError("AT+HTTPPARA=\"CID\",1\r\n", lastResp)) return 1;
+	SIM.print("AT+HTTPPARA=\"URL\",\"");SIM.print(url); SIM.print(F("\"\r\n")); if(!waitForResp(lastResp, "OK", def_timeout, false, "")) return 2;
+	if(_execAndCatchError("AT+HTTPSSL=0\r\n", lastResp)) return 3;
+	if(_execAndCatchError("AT+HTTPACTION=0\r\n", lastResp)) return 4;
+	// Wait for +HTTPACTION
+
+	if(!waitForResp(lastResp, "+HTTPACTION: ", def_timeout*4, false, "")) return 0;
+	String HttpAction = _readSerial();
+	byte index1 = HttpAction.indexOf(',');
+	byte index2 = HttpAction.indexOf(',', index1+1);
+	int responseCode = HttpAction.substring(index1+1, index2).toInt();
+	int responseLen = HttpAction.substring(index2+1).toInt();
+	SIM.print("AT+HTTPREAD\r\n");
+	if(!waitForResp(lastResp, "+HTTPREAD: ", def_timeout, false, "")) return 0;
+	waitForResp(lastResp, "\n", def_timeout, false, "");
+	
+	HttpAction = _readSerial();
+	if(HttpAction.length() < respBufLen) HttpAction.toCharArray(response, respBufLen);
+	else response="Buffer overflow";
+	SIM.print("AT+HTTPTERM\r\n");
+	SIM.flush();
+	return responseCode;
+	
+	
+}
 
 bool Sim800l::answerCall(){
    SIM.print (F("ATA\r\n"));
@@ -281,7 +375,7 @@ String Sim800l::dateNet() {
 // Update the RTC of the module with the date of GSM. 
 bool Sim800l::updateRtc(int utc){
   
-  activateBearerProfile();
+  activateBearerProfile("TM");
   _buffer=dateNet();
   deactivateBearerProfile();
   
