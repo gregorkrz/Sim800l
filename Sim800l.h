@@ -74,6 +74,7 @@ class Sim800l
 	void signalQuality();
 	void setPhoneFunctionality();
 	byte getRegistrationStatus();
+	int getBatteryVoltage();
 	bool activateBearerProfile(char* apn_name);
 	int sendHTTPGetRequest(const char* url, char* response);
 	bool deactivateBearerProfile();

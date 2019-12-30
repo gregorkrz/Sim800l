@@ -34,7 +34,7 @@
 
 SoftwareSerial SIM(RX_PIN,TX_PIN);
 //String _buffer;
-const byte respBufLen = 25;
+const byte respBufLen = 64;
 const unsigned int def_timeout = 2; // timeout in seconds
 
 
@@ -195,6 +195,18 @@ byte Sim800l::getRegistrationStatus() {
 	4 = unknown
 	5 = registered, roaming
 	*/
+}
+
+int Sim800l::getBatteryVoltage() {
+	SIM.print("AT+CBC\r\n");
+	char lastResp[respBufLen] = "";
+	if(!waitForResp(lastResp, "OK", def_timeout, true, "ERROR")) return -2;
+	String lastRespS = lastResp;
+	int tmp = lastRespS.substring(lastRespS.indexOf(",", lastRespS.indexOf(",")+1)+1).toInt();
+
+	if(tmp >= 0 and tmp <=5000) return tmp;
+	else return -1;
+
 }
 
 bool Sim800l::_execAndCatchError(char* command, char* lastResponse) {
